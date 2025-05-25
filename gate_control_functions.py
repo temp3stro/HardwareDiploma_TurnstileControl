@@ -1,42 +1,68 @@
 #!/usr/bin/env python3
-from gpiozero import AngularServo, Button
+import RPi.GPIO as GPIO
 from time import sleep
+from gpiozero import Device, AngularServo, LED
+from gpiozero.pins.pigpio import PiGPIOFactory
 
-# Pin configuration
-SERVO_PIN = 18
-SW_CLOSED = 17
-SW_OPEN = 27
+# ========== Для чистого PWM без jitter ==========
+Device.pin_factory = PiGPIOFactory()
 
-servo = AngularServo(SERVO_PIN, min_angle=0, max_angle=180, min_pulse_width=0.0005, max_pulse_width=0.0025)
-sw_closed = Button(SW_CLOSED, pull_up=True)
-sw_open = Button(SW_OPEN, pull_up=True)
+# === Пины ===
+SERVO_PIN     = 18  # BCM18, phys 12
+RED_LED_PIN   = 23  # BCM23, phys 16
+GREEN_LED_PIN = 24  # BCM24, phys 18
+BUZZER_PIN    = 22  # BCM22, phys 15
 
-def close_gate(step=5, delay=0.2):
-    """Move servo toward 0° until CLOSED limit switch triggers"""
-    print("Closing…")
-    servo.angle = 90
-    sleep(0.5)
-    while not sw_closed.is_pressed and servo.angle and servo.angle > 0:
-        servo.angle -= step
-        print(f"  angle={servo.angle:.0f}°", end="\r")
-        sleep(delay)
-    print("\n→ Gate CLOSED" if sw_closed.is_pressed else "\n‼️ Failed to close")
+# === Настройка RPi.GPIO для зуммера ===
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(BUZZER_PIN, GPIO.OUT)
+GPIO.output(BUZZER_PIN, GPIO.HIGH)  # по умолчанию — молчим
 
-def open_gate(step=5, delay=0.2):
-    """Move servo toward 180° until OPEN limit switch triggers"""
+def beep(times=1, on_time=0.1, off_time=0.1):
+    """Трёхтональный зуммер через RPi.GPIO"""
+    for _ in range(times):
+        GPIO.output(BUZZER_PIN, GPIO.LOW)
+        sleep(on_time)
+        GPIO.output(BUZZER_PIN, GPIO.HIGH)
+        sleep(off_time)
+
+# === Инициализация gpiozero ===
+servo     = AngularServo(
+    SERVO_PIN,
+    min_angle=0, max_angle=180,
+    min_pulse_width=0.0005, max_pulse_width=0.0025
+)
+red_led   = LED(RED_LED_PIN)
+green_led = LED(GREEN_LED_PIN)
+
+# === Стартовое положение ===
+servo.angle = 0
+red_led.on()
+green_led.off()
+sleep(1)
+
+try:
+    # Открытие — сразу на 180°
+    red_led.off()
+    green_led.off()
     print("Opening…")
-    servo.angle = 90
-    sleep(0.5)
-    while not sw_open.is_pressed and servo.angle and servo.angle < 180:
-        servo.angle += step
-        print(f"  angle={servo.angle:.0f}°", end="\r")
-        sleep(delay)
-    print("\n→ Gate OPENED" if sw_open.is_pressed else "\n‼️ Failed to open")
+    servo.angle = 180
+    sleep(0.5)        # даём сервоприводу время дойти до упора
+    green_led.on()
+    beep(2)
+    print("→ OPENED")
+    sleep(1)
 
-if __name__ == "__main__":
-    try:
-        close_gate()
-        sleep(1)
-        open_gate()
-    finally:
-        servo.detach()
+    # Закрытие — сразу на 0°
+    red_led.off()
+    green_led.off()
+    print("Closing…")
+    servo.angle = 0
+    sleep(0.5)        # возвращаем в начальное положение
+    red_led.on()
+    beep(1)
+    print("→ CLOSED")
+
+finally:
+    servo.detach()
+    GPIO.cleanup()
